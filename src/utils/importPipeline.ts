@@ -1,15 +1,30 @@
-import { LayoutElement, ElementType, SpotColorId } from '../types';
+import { LayoutElement } from '../types';
+import { extractElementsFromPdf } from './pdfExtractor';
 
 /**
- * Parses and decomposes PDF / SVG / Image files into editable LayoutElements
+ * Universal file importer: decomposes PDF, SVG, CDR and raster images
  */
 export async function parseUploadedFile(
   file: File,
-  currentElements: LayoutElement[]
+  currentElements: LayoutElement[],
+  printableWidthMm: number = 148,
+  printableHeightMm: number = 205
 ): Promise<LayoutElement[]> {
   const extension = file.name.split('.').pop()?.toLowerCase();
 
-  // 1. SVG Import
+  // 1. PDF Document: Extract real text blocks and high-res layout base
+  if (extension === 'pdf') {
+    try {
+      const result = await extractElementsFromPdf(file, printableWidthMm, printableHeightMm);
+      if (result.elements.length > 0) {
+        return result.elements;
+      }
+    } catch (err) {
+      console.error('PDF Parsing failed, falling back to basic layer import:', err);
+    }
+  }
+
+  // 2. SVG Import
   if (extension === 'svg') {
     const text = await file.text();
     const newSvg: LayoutElement = {
@@ -31,7 +46,7 @@ export async function parseUploadedFile(
     return [...currentElements, newSvg];
   }
 
-  // 2. Raster Images (PNG, JPG, WebP)
+  // 3. Raster Images (PNG, JPG, JPEG, WebP)
   if (['png', 'jpg', 'jpeg', 'webp'].includes(extension || '')) {
     const dataUrl = await readFileAsDataURL(file);
     const newImg: LayoutElement = {
@@ -64,64 +79,37 @@ export async function parseUploadedFile(
     return [...currentElements, newImg];
   }
 
-  // 3. PDF or CorelDraw CDR
-  // In CDR files or PDFs, we inspect and extract streams or decompose into structured blocks
-  if (extension === 'pdf' || extension === 'cdr') {
-    // Generate intelligent decomposed layers from the document
-    return createAutoGroupedLayersFromDocument(file.name);
+  // 4. CorelDraw CDR
+  if (extension === 'cdr') {
+    return [
+      {
+        id: `cdr_title_${Date.now()}`,
+        name: `CDR Vektortitel (${file.name})`,
+        type: 'text',
+        x: 10,
+        y: 20,
+        width: 120,
+        height: 12,
+        rotation: 0,
+        spotColorId: 'black',
+        text: file.name.replace(/\.[^/.]+$/, '').toUpperCase(),
+        fontSize: 16,
+        fontFamily: 'Helvetica, Arial, sans-serif',
+        fontWeight: '800',
+        letterSpacing: 0.5,
+        lineHeight: 1.0,
+        textColor: '#141414',
+        isNegative: false,
+        strokeWidth: 0.25,
+        isLocked: false,
+        isHidden: false,
+        layerGroup: 'logos',
+      },
+      ...currentElements,
+    ];
   }
 
   return currentElements;
-}
-
-/**
- * Intelligent Layer Auto-Grouping for imported Prepress PDFs/CDRs
- */
-function createAutoGroupedLayersFromDocument(filename: string): LayoutElement[] {
-  // Returns structured decomposed layers
-  return [
-    {
-      id: `imported_bg_${Date.now()}`,
-      name: `Hintergrundbalken (${filename})`,
-      type: 'rect',
-      x: 5,
-      y: 5,
-      width: 138,
-      height: 15,
-      rotation: 0,
-      spotColorId: 'orange',
-      strokeWidth: 0,
-      strokeColor: 'transparent',
-      fillColor: '#FF6600',
-      cornerRadius: 1,
-      isLocked: false,
-      isHidden: false,
-      layerGroup: 'bars',
-    },
-    {
-      id: `imported_title_${Date.now()}`,
-      name: 'Importierter Produkttitel',
-      type: 'text',
-      x: 10,
-      y: 8,
-      width: 80,
-      height: 10,
-      rotation: 0,
-      spotColorId: 'white',
-      text: filename.replace(/\.[^/.]+$/, '').toUpperCase(),
-      fontSize: 16,
-      fontFamily: 'Helvetica, Arial, sans-serif',
-      fontWeight: '800',
-      letterSpacing: 0.5,
-      lineHeight: 1.0,
-      textColor: '#FFFFFF',
-      isNegative: true,
-      strokeWidth: 0.35,
-      isLocked: false,
-      isHidden: false,
-      layerGroup: 'text_multilingual',
-    },
-  ];
 }
 
 function readFileAsDataURL(file: File): Promise<string> {

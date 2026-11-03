@@ -7,32 +7,36 @@ import {
   SpotColor,
   TextElement,
   ImageElement,
+  ManufacturerProfile,
 } from './types';
 import { CARTRIDGE_CONFIGS, DEFAULT_SPOT_COLORS } from './constants/cartridgeConfigs';
 import { DEFAULT_ELEMENTS } from './constants/demoLayout';
+import { AppMenuBar } from './components/menubar/AppMenuBar';
+import { ContextOptionsBar } from './components/menubar/ContextOptionsBar';
 import { Toolbar } from './components/toolbar/Toolbar';
 import { HybridCanvas } from './components/canvas/HybridCanvas';
 import { Cartridge3DView } from './components/preview3d/Cartridge3DView';
 import { PrepressPanel } from './components/panels/PrepressPanel';
+import { LayersPanel } from './components/panels/LayersPanel';
 import { ImageEditPanel } from './components/panels/ImageEditPanel';
 import { ElementInspector } from './components/panels/ElementInspector';
 import { McpConsoleModal } from './components/mcp/McpConsoleModal';
 import { SvgLibraryModal } from './components/modals/SvgLibraryModal';
 import { ExportModal } from './components/modals/ExportModal';
+import { ShortcutsModal } from './components/modals/ShortcutsModal';
 import { McpEditorBridge, McpToolCall, McpToolResult } from './mcp/mcpBridge';
 import { runCartridgePreflightCheck } from './utils/preflightCheck';
 import { parseUploadedFile } from './utils/importPipeline';
 import {
-  Sparkles,
-  ShieldAlert,
   Layers,
   Sliders,
-  Maximize2,
-  RotateCcw,
+  Sparkles,
   Download,
   Bot,
+  RotateCcw,
   CheckCircle2,
-  Wand2,
+  ShieldAlert,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export function App() {
@@ -43,7 +47,12 @@ export function App() {
   const [cartridge, setCartridge] = useState<CartridgeConfig>(CARTRIDGE_CONFIGS['fischbach-310']);
   const [spotColors, setSpotColors] = useState<SpotColor[]>(DEFAULT_SPOT_COLORS);
   const [zoom, setZoom] = useState<number>(1.0);
-  const [activeRightTab, setActiveRightTab] = useState<'prepress' | 'inspector' | 'gimp'>('prepress');
+  const [activeRightTab, setActiveRightTab] = useState<'prepress' | 'layers' | 'inspector' | 'gimp'>('prepress');
+  const [is3dVisible, setIs3dVisible] = useState(true);
+
+  // Undo / Redo History Stack
+  const [history, setHistory] = useState<LayoutElement[][]>([DEFAULT_ELEMENTS]);
+  const [historyIndex, setHistoryIndex] = useState(0);
 
   // Prepress Settings
   const [settings, setSettings] = useState<PrepressSettings>({
@@ -61,19 +70,50 @@ export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasUpdateTrigger, setCanvasUpdateTrigger] = useState<number>(0);
 
+  // Hidden File Inputs
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const svgInputRef = useRef<HTMLInputElement>(null);
+
   // Modals
   const [isMcpModalOpen, setIsMcpModalOpen] = useState(false);
   const [isSvgLibraryOpen, setIsSvgLibraryOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
 
   // MCP Logs & Bridge
   const [mcpLogs, setMcpLogs] = useState<{ call: McpToolCall; res: McpToolResult }[]>([]);
   const bridgeRef = useRef<McpEditorBridge | null>(null);
 
+  // Push new state to history
+  const updateElementsWithHistory = (newElements: LayoutElement[]) => {
+    setElements(newElements);
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newElements);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  };
+
+  const handleUndo = () => {
+    if (historyIndex > 0) {
+      const prev = history[historyIndex - 1];
+      setHistoryIndex(historyIndex - 1);
+      setElements(prev);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndex < history.length - 1) {
+      const next = history[historyIndex + 1];
+      setHistoryIndex(historyIndex + 1);
+      setElements(next);
+    }
+  };
+
   if (!bridgeRef.current) {
     bridgeRef.current = new McpEditorBridge(
       elements,
-      setElements,
+      updateElementsWithHistory,
       settings,
       setSettings,
       cartridge,
@@ -89,7 +129,6 @@ export function App() {
     bridgeRef.current.connectWebSocket();
   }
 
-  // Keep bridge updated with latest state
   useEffect(() => {
     if (bridgeRef.current) {
       bridgeRef.current.updateContext(elements, settings, cartridge);
@@ -106,8 +145,6 @@ export function App() {
   useEffect(() => {
     if (selectedElement?.type === 'image') {
       setActiveRightTab('gimp');
-    } else if (selectedElement && activeRightTab === 'gimp') {
-      setActiveRightTab('inspector');
     }
   }, [selectedElementId]);
 
@@ -117,12 +154,74 @@ export function App() {
     [elements, cartridge, settings]
   );
 
-  // Canvas Updated Callback
   const handleCanvasUpdated = () => {
     setCanvasUpdateTrigger((v) => v + 1);
   };
 
-  // 1-Click Action: Boost Negative Texts (+0.35pt)
+  // Keyboard Shortcuts (Ctrl+Z, Ctrl+Y, Ctrl+O, Ctrl+E, Ctrl+D, Del)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        pdfInputRef.current?.click();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        setIsExportModalOpen(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        handleDuplicateSelected();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedElementId) {
+          e.preventDefault();
+          handleDeleteSelected();
+        }
+      } else if (e.key.toLowerCase() === 'v') {
+        setActiveTool('select');
+      } else if (e.key.toLowerCase() === 't') {
+        handleAddText();
+      } else if (e.key.toLowerCase() === 'l') {
+        handleAddJointLine();
+      } else if (e.key.toLowerCase() === 'r') {
+        handleAddRect();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [historyIndex, history, selectedElementId, elements]);
+
+  // Duplicate Selected Element
+  const handleDuplicateSelected = () => {
+    if (!selectedElement) return;
+    const dup: LayoutElement = {
+      ...selectedElement,
+      id: `${selectedElement.type}_${Date.now()}`,
+      name: `${selectedElement.name} (Kopie)`,
+      x: selectedElement.x + 5,
+      y: selectedElement.y + 5,
+    };
+    updateElementsWithHistory([...elements, dup]);
+    setSelectedElementId(dup.id);
+  };
+
+  // Delete Selected Element
+  const handleDeleteSelected = () => {
+    if (!selectedElementId) return;
+    updateElementsWithHistory(elements.filter((e) => e.id !== selectedElementId));
+    setSelectedElementId(null);
+  };
+
+  // Boost Negative Texts
   const handleBoostNegativeTexts = () => {
     const updated = elements.map((el) => {
       if (el.type === 'text' && el.isNegative) {
@@ -133,10 +232,10 @@ export function App() {
       }
       return el;
     });
-    setElements(updated);
+    updateElementsWithHistory(updated);
   };
 
-  // 1-Click Action: Convert all photos to 1c Grayscale + Dot Gain
+  // Convert all photos to 1c Grayscale
   const handleConvertTo1cAll = () => {
     const updated = elements.map((el) => {
       if (el.type === 'image') {
@@ -151,7 +250,7 @@ export function App() {
       }
       return el;
     });
-    setElements(updated);
+    updateElementsWithHistory(updated);
   };
 
   // Preflight Auto-Fix
@@ -189,10 +288,10 @@ export function App() {
       }
       return el;
     });
-    setElements(updated);
+    updateElementsWithHistory(updated);
   };
 
-  // Toolbar Actions
+  // Add Tools
   const handleAddText = () => {
     const newText: TextElement = {
       id: `text_${Date.now()}`,
@@ -217,7 +316,7 @@ export function App() {
       isHidden: false,
       layerGroup: 'text_multilingual',
     };
-    setElements([...elements, newText]);
+    updateElementsWithHistory([...elements, newText]);
     setSelectedElementId(newText.id);
     setActiveRightTab('inspector');
   };
@@ -243,7 +342,7 @@ export function App() {
       isHidden: false,
       layerGroup: 'bars',
     };
-    setElements([...elements, newLine]);
+    updateElementsWithHistory([...elements, newLine]);
     setSelectedElementId(newLine.id);
     setActiveRightTab('inspector');
   };
@@ -267,7 +366,7 @@ export function App() {
       isHidden: false,
       layerGroup: 'bars',
     };
-    setElements([...elements, newRect]);
+    updateElementsWithHistory([...elements, newRect]);
     setSelectedElementId(newRect.id);
     setActiveRightTab('inspector');
   };
@@ -297,130 +396,127 @@ export function App() {
       isHidden: false,
       layerGroup: 'bars',
     };
-    setElements([...elements, newTable]);
+    updateElementsWithHistory([...elements, newTable]);
     setSelectedElementId(newTable.id);
     setActiveRightTab('inspector');
   };
 
-  // Upload handlers
-  const handleUploadImage = async (file: File) => {
-    const updated = await parseUploadedFile(file, elements);
-    setElements(updated);
+  // File Upload Handlers (PDF, Image, SVG)
+  const handleUploadFile = async (file: File) => {
+    const updated = await parseUploadedFile(
+      file,
+      elements,
+      cartridge.printableWidthMm,
+      cartridge.printableHeightMm
+    );
+    updateElementsWithHistory(updated);
   };
 
-  const handleUploadSvg = async (file: File) => {
-    const updated = await parseUploadedFile(file, elements);
-    setElements(updated);
-  };
-
-  const handleImportPDF = async (file: File) => {
-    const updated = await parseUploadedFile(file, elements);
-    setElements(updated);
-  };
-
-  // Reset to Demo Template
   const handleResetTemplate = () => {
-    if (confirm('Möchtest du das Layout auf das Demo-Template "M ONE Sanitär Silicon PREMIUM" zurücksetzen?')) {
-      setElements(DEFAULT_ELEMENTS);
+    if (confirm('Möchtest du das Layout auf das Demo-Template "M ONE Sanitär Silicon" zurücksetzen?')) {
+      updateElementsWithHistory(DEFAULT_ELEMENTS);
+      setSelectedElementId(null);
+    }
+  };
+
+  const handleNewLayout = () => {
+    if (confirm('Neues leeres Kartuschenlayout anlegen?')) {
+      updateElementsWithHistory([]);
       setSelectedElementId(null);
     }
   };
 
   return (
     <div className="flex flex-col w-screen h-screen bg-[#0f1012] text-zinc-100 overflow-hidden font-sans">
-      {/* 1. TOP PROFESSIONAL APP BAR */}
-      <header className="h-12 bg-[#16171b] border-b border-[#26282e] px-4 flex items-center justify-between z-30 select-none">
-        {/* Left: App Brand & Cartridge Spec */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-md shadow-orange-500/50" />
-            <h1 className="font-bold text-sm tracking-wider uppercase text-zinc-100">
-              ACE Kartuschen-Prepress
-            </h1>
-            <span className="text-[10px] bg-orange-500/15 text-orange-400 font-mono px-2 py-0.5 rounded border border-orange-500/30">
-              UV-Siebdruck v2.0
-            </span>
-          </div>
+      {/* 1. TOP MENU BAR (VectorCraft style) */}
+      <AppMenuBar
+        onNew={handleNewLayout}
+        onOpenPdf={() => pdfInputRef.current?.click()}
+        onImportSvg={() => svgInputRef.current?.click()}
+        onImportImage={() => imageInputRef.current?.click()}
+        onResetDemo={handleResetTemplate}
+        onExportPdf={() => setIsExportModalOpen(true)}
+        onExportSvg={() => setIsExportModalOpen(true)}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={historyIndex > 0}
+        canRedo={historyIndex < history.length - 1}
+        onDuplicateSelected={handleDuplicateSelected}
+        onDeleteSelected={handleDeleteSelected}
+        hasSelection={!!selectedElementId}
+        onBoostTexts={handleBoostNegativeTexts}
+        onConvert1cAll={handleConvertTo1cAll}
+        onSelectManufacturer={(profile) => {
+          const cfg = CARTRIDGE_CONFIGS[profile];
+          if (cfg) {
+            setCartridge(cfg);
+            setSettings({ ...settings, manufacturerProfile: profile });
+          }
+        }}
+        currentProfile={settings.manufacturerProfile}
+        onSelectPlateView={(view) => setSettings({ ...settings, activeColorView: view })}
+        currentPlateView={settings.activeColorView}
+        onZoomIn={() => setZoom((z) => Math.min(3.5, z + 0.15))}
+        onZoomOut={() => setZoom((z) => Math.max(0.35, z - 0.15))}
+        onZoomReset={() => setZoom(1.0)}
+        onZoomFit={() => setZoom(0.85)}
+        onOpenMcp={() => setIsMcpModalOpen(true)}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
+        onToggle3D={() => setIs3dVisible(!is3dVisible)}
+        is3dVisible={is3dVisible}
+      />
 
-          <div className="h-4 w-[1px] bg-[#2d3038]" />
+      {/* 2. CONTEXTUAL OPTIONS BAR */}
+      <ContextOptionsBar
+        selectedElement={selectedElement}
+        onUpdateElement={(updated) =>
+          updateElementsWithHistory(elements.map((e) => (e.id === updated.id ? updated : e)))
+        }
+        spotColors={spotColors}
+        cartridge={cartridge}
+        settings={settings}
+        onUpdateSettings={setSettings}
+        onReplaceImageClick={() => imageInputRef.current?.click()}
+      />
 
-          {/* Cartridge Model Badge */}
-          <div className="flex items-center gap-1.5 text-xs text-zinc-300">
-            <span className="text-zinc-500">Kartusche:</span>
-            <strong className="text-zinc-200">{cartridge.name}</strong>
-            <span className="text-orange-400 font-mono font-semibold">({cartridge.volume})</span>
-          </div>
-        </div>
+      {/* Hidden Global File Inputs */}
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept=".pdf,.cdr"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleUploadFile(f);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleUploadFile(f);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
+      <input
+        ref={svgInputRef}
+        type="file"
+        accept=".svg"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleUploadFile(f);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
 
-        {/* Center: Preflight Status Indicator */}
-        <div className="flex items-center gap-2">
-          {preflightIssues.filter((i) => i.severity === 'error').length > 0 ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-red-950/40 border border-red-800 text-red-400 text-xs font-medium">
-              <ShieldAlert className="w-3.5 h-3.5 text-red-400" />
-              <span>Preflight: {preflightIssues.filter((i) => i.severity === 'error').length} Fehler vor Druckfreigabe</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/30 border border-emerald-800/50 text-emerald-400 text-xs font-medium">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Siebdruck-Preflight: Bestanden</span>
-            </div>
-          )}
-
-          {/* Quick Prepress 1-Click Action */}
-          <button
-            onClick={handleBoostNegativeTexts}
-            className="flex items-center gap-1 px-2 py-1 rounded bg-[#24262d] hover:bg-[#2e313b] text-zinc-300 hover:text-white border border-[#343844] text-xs transition"
-            title="Verstärkt feine Negativschriften um 0.35pt, damit sie im Siebdruck nicht zulaufen"
-          >
-            <Wand2 className="w-3 h-3 text-orange-400" />
-            <span>Negativtext-Booster</span>
-          </button>
-        </div>
-
-        {/* Right: Actions (MCP, Template, Export) */}
-        <div className="flex items-center gap-2">
-          {/* MCP Bridge Button */}
-          <button
-            onClick={() => setIsMcpModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-950/50 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-xs font-medium transition shadow"
-            title="MCP Live-Fernsteuerung öffnen"
-          >
-            <Bot className="w-3.5 h-3.5 text-indigo-400" />
-            <span>MCP-Terminal</span>
-          </button>
-
-          {/* Reset Demo Button */}
-          <button
-            onClick={handleResetTemplate}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-[#24262d] transition"
-            title="Demo-Template M ONE Sanitär Silicon zurücksetzen"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-
-          {/* SVG Library Button */}
-          <button
-            onClick={() => setIsSvgLibraryOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#22242b] hover:bg-[#2b2e38] border border-[#323642] text-zinc-300 text-xs transition"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-orange-400" />
-            <span>Icons & GHS</span>
-          </button>
-
-          {/* Export PDF Button */}
-          <button
-            onClick={() => setIsExportModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 hover:brightness-110 text-white font-semibold text-xs shadow-lg shadow-orange-950/40 transition"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Druck-PDF Export</span>
-          </button>
-        </div>
-      </header>
-
-      {/* 2. MAIN 3-COLUMN WORKSPACE */}
+      {/* 3. MAIN WORKSPACE (Toolbar, Hybrid Canvas, Sidebar) */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Column 1: Left Toolbar */}
+        {/* Left Professional Toolbar */}
         <Toolbar
           activeTool={activeTool}
           setActiveTool={setActiveTool}
@@ -428,9 +524,9 @@ export function App() {
           onAddJointLine={handleAddJointLine}
           onAddRect={handleAddRect}
           onAddTable={handleAddTable}
-          onUploadImage={handleUploadImage}
-          onUploadSvg={handleUploadSvg}
-          onImportPDF={handleImportPDF}
+          onUploadImage={(f) => handleUploadFile(f)}
+          onUploadSvg={(f) => handleUploadFile(f)}
+          onImportPDF={(f) => handleUploadFile(f)}
           onExportPDF={() => setIsExportModalOpen(true)}
           onExportSVG={() => setIsExportModalOpen(true)}
           onExportSeparationPack={() => setIsExportModalOpen(true)}
@@ -441,11 +537,11 @@ export function App() {
           onOpenMcpConsole={() => setIsMcpModalOpen(true)}
         />
 
-        {/* Column 2: Center Hybrid Canvas (Pan & Zoom Kartuschen-Druckbogen) */}
+        {/* Center Canvas */}
         <main className="flex-1 h-full relative overflow-hidden bg-[#0d0e11] flex flex-col">
           <HybridCanvas
             elements={elements}
-            onElementsChange={setElements}
+            onElementsChange={updateElementsWithHistory}
             selectedElementId={selectedElementId}
             onSelectElement={setSelectedElementId}
             cartridge={cartridge}
@@ -458,25 +554,37 @@ export function App() {
           />
         </main>
 
-        {/* Column 3: Right Inspector & 3D Cartridge Panel */}
-        <aside className="w-80 bg-[#16171b] border-l border-[#26282e] flex flex-col justify-between overflow-hidden z-20">
+        {/* Right Dockable Sidebar */}
+        <aside className="w-84 bg-[#16171b] border-l border-[#26282e] flex flex-col justify-between overflow-hidden z-20">
           {/* Top Segmented Tabs */}
           <div className="flex items-center border-b border-[#26282e] bg-[#141518]">
             <button
               onClick={() => setActiveRightTab('prepress')}
-              className={`flex-1 py-2.5 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-2 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1 ${
                 activeRightTab === 'prepress'
                   ? 'border-orange-500 text-orange-400 bg-[#1c1d22]'
                   : 'border-transparent text-zinc-400 hover:text-white'
               }`}
             >
-              <Layers className="w-3.5 h-3.5" />
+              <SlidersHorizontal className="w-3.5 h-3.5" />
               <span>Prepress</span>
             </button>
 
             <button
+              onClick={() => setActiveRightTab('layers')}
+              className={`flex-1 py-2 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1 ${
+                activeRightTab === 'layers'
+                  ? 'border-orange-500 text-orange-400 bg-[#1c1d22]'
+                  : 'border-transparent text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Ebenen</span>
+            </button>
+
+            <button
               onClick={() => setActiveRightTab('inspector')}
-              className={`flex-1 py-2.5 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-2 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1 ${
                 activeRightTab === 'inspector'
                   ? 'border-orange-500 text-orange-400 bg-[#1c1d22]'
                   : 'border-transparent text-zinc-400 hover:text-white'
@@ -489,7 +597,7 @@ export function App() {
             {selectedElement?.type === 'image' && (
               <button
                 onClick={() => setActiveRightTab('gimp')}
-                className={`flex-1 py-2.5 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 text-xs font-medium text-center transition border-b-2 flex items-center justify-center gap-1 ${
                   activeRightTab === 'gimp'
                     ? 'border-orange-500 text-orange-400 bg-[#1c1d22]'
                     : 'border-transparent text-zinc-400 hover:text-white'
@@ -501,7 +609,7 @@ export function App() {
             )}
           </div>
 
-          {/* Middle: Tab Content (Scrollable) */}
+          {/* Middle: Tab Content */}
           <div className="flex-1 p-3 overflow-y-auto">
             {activeRightTab === 'prepress' && (
               <PrepressPanel
@@ -518,14 +626,23 @@ export function App() {
               />
             )}
 
+            {activeRightTab === 'layers' && (
+              <LayersPanel
+                elements={elements}
+                onElementsChange={updateElementsWithHistory}
+                selectedElementId={selectedElementId}
+                onSelectElement={setSelectedElementId}
+              />
+            )}
+
             {activeRightTab === 'inspector' && selectedElement && (
               <ElementInspector
                 element={selectedElement}
                 onUpdateElement={(updated) =>
-                  setElements(elements.map((e) => (e.id === updated.id ? updated : e)))
+                  updateElementsWithHistory(elements.map((e) => (e.id === updated.id ? updated : e)))
                 }
                 onDeleteElement={(id) => {
-                  setElements(elements.filter((e) => e.id !== id));
+                  updateElementsWithHistory(elements.filter((e) => e.id !== id));
                   setSelectedElementId(null);
                 }}
                 spotColors={spotColors}
@@ -533,10 +650,10 @@ export function App() {
             )}
 
             {activeRightTab === 'inspector' && !selectedElement && (
-              <div className="text-zinc-500 text-center py-10 flex flex-col items-center gap-2">
-                <Sliders className="w-8 h-8 opacity-40" />
+              <div className="text-zinc-500 text-center py-12 flex flex-col items-center gap-2">
+                <Sliders className="w-8 h-8 opacity-30" />
                 <span className="text-xs">
-                  Klicke auf ein Element im Kartuschendruckbogen, um Schrift, Farben oder Maße anzupassen.
+                  Klicke auf ein Element im Kartuschendruckbogen oder in der Ebenen-Liste, um Schrift, Farben oder Maße anzupassen.
                 </span>
               </div>
             )}
@@ -545,25 +662,27 @@ export function App() {
               <ImageEditPanel
                 element={selectedElement as ImageElement}
                 onUpdateElement={(updated) =>
-                  setElements(elements.map((e) => (e.id === updated.id ? updated : e)))
+                  updateElementsWithHistory(elements.map((e) => (e.id === updated.id ? updated : e)))
                 }
                 spotColors={spotColors}
               />
             )}
           </div>
 
-          {/* Bottom Card: Live 3D Cartridge Preview */}
-          <div className="p-2.5 border-t border-[#26282e] bg-[#121316]">
-            <Cartridge3DView
-              layoutCanvasRef={canvasRef}
-              cartridge={cartridge}
-              updateTrigger={canvasUpdateTrigger}
-            />
-          </div>
+          {/* Bottom Card: Live 3D Cartridge Preview (collapsible) */}
+          {is3dVisible && (
+            <div className="p-2 border-t border-[#26282e] bg-[#121316]">
+              <Cartridge3DView
+                layoutCanvasRef={canvasRef}
+                cartridge={cartridge}
+                updateTrigger={canvasUpdateTrigger}
+              />
+            </div>
+          )}
         </aside>
       </div>
 
-      {/* 3. MODALS */}
+      {/* 4. MODALS */}
       <McpConsoleModal
         isOpen={isMcpModalOpen}
         onClose={() => setIsMcpModalOpen(false)}
@@ -591,7 +710,7 @@ export function App() {
             isHidden: false,
             layerGroup: 'logos',
           };
-          setElements([...elements, newSvg]);
+          updateElementsWithHistory([...elements, newSvg]);
           setSelectedElementId(newSvg.id);
         }}
       />
@@ -603,6 +722,11 @@ export function App() {
         cartridge={cartridge}
         spotColors={spotColors}
         settings={settings}
+      />
+
+      <ShortcutsModal
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
       />
     </div>
   );
