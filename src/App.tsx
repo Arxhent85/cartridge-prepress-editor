@@ -26,7 +26,7 @@ import { ExportModal } from './components/modals/ExportModal';
 import { ShortcutsModal } from './components/modals/ShortcutsModal';
 import { McpEditorBridge, McpToolCall, McpToolResult } from './mcp/mcpBridge';
 import { runCartridgePreflightCheck } from './utils/preflightCheck';
-import { parseUploadedFile } from './utils/importPipeline';
+import { parseUploadedFileWithReport } from './utils/importPipeline';
 import {
   Layers,
   Sliders,
@@ -37,6 +37,9 @@ import {
   CheckCircle2,
   ShieldAlert,
   SlidersHorizontal,
+  Loader2,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 
 export function App() {
@@ -49,6 +52,10 @@ export function App() {
   const [zoom, setZoom] = useState<number>(1.0);
   const [activeRightTab, setActiveRightTab] = useState<'prepress' | 'layers' | 'inspector' | 'gimp'>('prepress');
   const [is3dVisible, setIs3dVisible] = useState(true);
+
+  // Import Status & Loading Toast
+  const [isImporting, setIsImporting] = useState(false);
+  const [importNotification, setImportNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Undo / Redo History Stack
   const [history, setHistory] = useState<LayoutElement[][]>([DEFAULT_ELEMENTS]);
@@ -401,15 +408,42 @@ export function App() {
     setActiveRightTab('inspector');
   };
 
-  // File Upload Handlers (PDF, Image, SVG)
+  // File Upload Handlers (PDF, Image, SVG, CDR)
   const handleUploadFile = async (file: File) => {
-    const updated = await parseUploadedFile(
-      file,
-      elements,
-      cartridge.printableWidthMm,
-      cartridge.printableHeightMm
-    );
-    updateElementsWithHistory(updated);
+    setIsImporting(true);
+    setImportNotification(null);
+    try {
+      const response = await parseUploadedFileWithReport(
+        file,
+        elements,
+        cartridge.printableWidthMm,
+        cartridge.printableHeightMm
+      );
+
+      if (response.success && response.elements.length > 0) {
+        updateElementsWithHistory(response.elements);
+        setSelectedElementId(null);
+        setImportNotification({
+          type: 'success',
+          message: response.message || `Datei "${file.name}" erfolgreich importiert!`,
+        });
+      } else {
+        setImportNotification({
+          type: 'error',
+          message: response.message || 'Datei konnte nicht geladen werden.',
+        });
+      }
+    } catch (err: any) {
+      setImportNotification({
+        type: 'error',
+        message: `Fehler beim Import: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setIsImporting(false);
+      setTimeout(() => {
+        setImportNotification(null);
+      }, 6000);
+    }
   };
 
   const handleResetTemplate = () => {
@@ -539,6 +573,37 @@ export function App() {
 
         {/* Center Canvas */}
         <main className="flex-1 h-full relative overflow-hidden bg-[#0d0e11] flex flex-col">
+          {/* Loading Overlay when parsing PDF */}
+          {isImporting && (
+            <div className="absolute inset-0 z-50 bg-black/75 backdrop-blur-xs flex flex-col items-center justify-center gap-3 select-none">
+              <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
+              <div className="font-semibold text-sm text-zinc-100">Druck-PDF wird analysiert & zerlegt...</div>
+              <div className="text-xs text-zinc-400">Vektoren, Textblöcke und hochauflösendes Drucklayout werden extrahiert.</div>
+            </div>
+          )}
+
+          {/* Toast Notification */}
+          {importNotification && (
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-2xl border text-xs font-medium flex items-center gap-2 animate-bounce transition ${
+              importNotification.type === 'success'
+                ? 'bg-emerald-950/90 border-emerald-700 text-emerald-200'
+                : 'bg-red-950/90 border-red-700 text-red-200'
+            }`}>
+              {importNotification.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              )}
+              <span>{importNotification.message}</span>
+              <button
+                onClick={() => setImportNotification(null)}
+                className="ml-2 text-zinc-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <HybridCanvas
             elements={elements}
             onElementsChange={updateElementsWithHistory}
@@ -551,6 +616,7 @@ export function App() {
             onCanvasUpdated={handleCanvasUpdated}
             zoom={zoom}
             onZoomChange={setZoom}
+            onDropFile={handleUploadFile}
           />
         </main>
 

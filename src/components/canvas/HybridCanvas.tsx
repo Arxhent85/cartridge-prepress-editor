@@ -4,8 +4,6 @@ import {
   LayoutElement,
   PrepressSettings,
   SpotColor,
-  TextElement,
-  ImageElement,
 } from '../../types';
 import { applyPrepressFilters, applyHalftoneSimulation } from '../../utils/imageProcessing';
 
@@ -21,6 +19,7 @@ interface HybridCanvasProps {
   onCanvasUpdated?: () => void;
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  onDropFile?: (file: File) => void;
 }
 
 export const HybridCanvas: React.FC<HybridCanvasProps> = ({
@@ -35,6 +34,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
   onCanvasUpdated,
   zoom,
   onZoomChange,
+  onDropFile,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 60, y: 40 });
@@ -45,9 +45,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
   const [isDraggingElement, setIsDraggingElement] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [elementStartPos, setElementStartPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  // Inline text editing
-  const [editingTextId, setEditingTextId] = useState<string | null>(null);
 
   // Cached raster images for canvas performance
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -122,7 +119,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       if (isSinglePlate) {
         const plateId = settings.activeColorView.replace('plate_', '');
         if (plateId === 'white') {
-          // White plate renders negative texts and white-assigned elements
           if (!('isNegative' in el && el.isNegative) && el.spotColorId !== 'white') return;
         } else if (el.spotColorId !== plateId) {
           return;
@@ -181,7 +177,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
         ctx.fillStyle = isSinglePlate ? '#141414' : el.isNegative ? '#ffffff' : el.textColor;
         ctx.textBaseline = 'top';
 
-        // Prepress Stroke Boost (for negative text or reinforced print)
+        // Prepress Stroke Boost
         if (el.strokeWidth > 0) {
           ctx.strokeStyle = ctx.fillStyle;
           ctx.lineWidth = el.strokeWidth * pxPerMm * 0.35;
@@ -196,7 +192,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       } else if (el.type === 'image') {
         const cachedImg = imageCache.current.get(el.src);
         if (cachedImg && cachedImg.complete) {
-          // Process image with prepress filters
           const cacheKey = `${el.id}_${JSON.stringify(el.filterSettings)}_${settings.activeColorView}`;
           let processed = processedImageCache.current.get(cacheKey);
 
@@ -210,10 +205,8 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
             processedImageCache.current.set(cacheKey, processed);
           }
 
-          // Draw processed image
           ctx.drawImage(processed, x, y, w, h);
 
-          // Halftone simulation if active
           if (settings.halftoneMode !== 'none') {
             const hCanvas = document.createElement('canvas');
             hCanvas.width = w;
@@ -227,7 +220,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
           }
         }
       } else if (el.type === 'svg') {
-        // Draw SVG as image
         const svgKey = `svg_${el.id}`;
         let svgImg = imageCache.current.get(svgKey);
         if (!svgImg) {
@@ -241,7 +233,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
           ctx.drawImage(svgImg, x, y, w, h);
         }
       } else if (el.type === 'table') {
-        // Render tabular grid for application temperatures / specs
         ctx.fillStyle = isSinglePlate ? '#ffffff' : el.fillColor || '#ffffff';
         ctx.fillRect(x, y, w, h);
         ctx.strokeStyle = isSinglePlate ? '#141414' : el.strokeColor;
@@ -262,13 +253,11 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
             ctx.lineTo(x + w, rowY);
             ctx.stroke();
 
-            // Col divider
             ctx.beginPath();
             ctx.moveTo(x + colW, y);
             ctx.lineTo(x + colW, y + h);
             ctx.stroke();
 
-            // Text
             ctx.fillText(row[0] || '', x + 6, rowY + rowH / 2);
             ctx.font = `normal ${8.5 * (pxPerMm / 2.8346)}px Helvetica, Arial, sans-serif`;
             ctx.fillText(row[1] || '', x + colW + 6, rowY + rowH / 2);
@@ -279,7 +268,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       ctx.restore();
     });
 
-    // Render Color Control Strip (Farbkontrollstreifen)
+    // Render Color Control Strip
     if (settings.includeControlStrip) {
       const stripX = cartridge.printableWidthMm * pxPerMm + 14;
       renderControlStrip(ctx, stripX, canvasHeightPx, spotColors);
@@ -300,7 +289,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
         ctx.setLineDash([3, 3]);
         ctx.strokeRect(sx - 2, sy - 2, sw + 4, sh + 4);
 
-        // Corner handles
         ctx.setLineDash([]);
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = '#ff6600';
@@ -330,12 +318,10 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     onCanvasUpdated,
   ]);
 
-  // Redraw when dependencies change
   useEffect(() => {
     renderCanvas();
   }, [renderCanvas]);
 
-  // Farbkontrollstreifen renderer
   const renderControlStrip = (
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -347,10 +333,8 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     ctx.font = 'bold 8px monospace';
     ctx.fillText('KONTROLLSTREIFEN', x - 4, 16);
 
-    // Passkreuz top
     drawPasskreuz(ctx, x + 16, 40);
 
-    // Spot color wedges
     colors.forEach((c, idx) => {
       const cy = 65 + idx * 45;
       ctx.fillStyle = c.hex;
@@ -359,7 +343,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       ctx.lineWidth = 0.5;
       ctx.strokeRect(x, cy, 32, 16);
 
-      // 50% & 25% wedges
       ctx.globalAlpha = 0.5;
       ctx.fillRect(x, cy + 18, 16, 12);
       ctx.globalAlpha = 0.25;
@@ -371,7 +354,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       ctx.fillText(c.id.toUpperCase(), x, cy + 40);
     });
 
-    // Passkreuz bottom
     drawPasskreuz(ctx, x + 16, totalH - 45);
     ctx.restore();
   };
@@ -394,7 +376,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     ctx.fill();
   };
 
-  // Mouse Wheel Zoom
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
@@ -402,9 +383,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     onZoomChange(newZoom);
   };
 
-  // Pan / Drag interactions
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Middle click or space key: pan canvas
     if (e.button === 1 || e.altKey) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -416,7 +395,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     const mouseCanvasX = (e.clientX - rect.left) / zoom / pxPerMm;
     const mouseCanvasY = (e.clientY - rect.top) / zoom / pxPerMm;
 
-    // Check if clicked an element (reverse order for top-most)
     const clicked = [...elements].reverse().find((el) => {
       if (el.isHidden) return false;
       return (
@@ -434,7 +412,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       setElementStartPos({ x: clicked.x, y: clicked.y });
     } else {
       onSelectElement(null);
-      // Pan canvas by dragging empty area
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
     }
@@ -473,7 +450,6 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     setIsDraggingElement(false);
   };
 
-  // Drag and Drop Image Swap directly onto image element
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
@@ -484,53 +460,8 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     if (files.length === 0) return;
 
     const file = files[0];
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (!dataUrl) return;
-
-      // If dropped directly onto selected element or image
-      if (selectedElementId) {
-        const updated = elements.map((el) => {
-          if (el.id === selectedElementId && el.type === 'image') {
-            return {
-              ...el,
-              src: dataUrl,
-              originalSrc: dataUrl,
-            };
-          }
-          return el;
-        });
-        onElementsChange(updated);
-      } else {
-        // Find if dropped over any image element
-        const rect = canvasRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const dropX = (e.clientX - rect.left) / zoom / pxPerMm;
-        const dropY = (e.clientY - rect.top) / zoom / pxPerMm;
-
-        const targetImg = elements.find(
-          (el) =>
-            el.type === 'image' &&
-            dropX >= el.x &&
-            dropX <= el.x + el.width &&
-            dropY >= el.y &&
-            dropY <= el.y + el.height
-        );
-
-        if (targetImg) {
-          const updated = elements.map((el) =>
-            el.id === targetImg.id ? { ...el, src: dataUrl, originalSrc: dataUrl } : el
-          );
-          onElementsChange(updated);
-          onSelectElement(targetImg.id);
-        }
-      }
-    };
-
-    if (file.type.startsWith('image/')) {
-      reader.readAsDataURL(file);
+    if (onDropFile) {
+      onDropFile(file);
     }
   };
 
@@ -573,7 +504,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
           className="shadow-2xl border border-[#3e424d] rounded-sm bg-white"
         />
 
-        {/* Inline Text Input Overlay when editing */}
+        {/* Inline Hint when text is selected */}
         {selectedElement && selectedElement.type === 'text' && (
           <div
             style={{
@@ -584,9 +515,8 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
             }}
             className="pointer-events-none"
           >
-            {/* Direct floating hint */}
             <div className="absolute -top-6 left-0 bg-orange-600 text-white font-mono text-[10px] px-2 py-0.5 rounded shadow pointer-events-auto">
-              Text anklicken & im Eigenschafts-Panel bearbeiten
+              Text anklicken & in der Optionsleiste oben editieren
             </div>
           </div>
         )}
@@ -599,7 +529,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
         <span className="text-zinc-500">|</span>
         <span className="font-mono text-orange-400">{Math.round(zoom * 100)}%</span>
         <span className="text-zinc-500">|</span>
-        <span>Drag & Drop: Fotos/SVGs direkt auf die Fläche ziehen</span>
+        <span>Drag & Drop: Beliebige PDF-, SVG- oder Bilddatei direkt auf die Fläche ziehen!</span>
       </div>
     </div>
   );
