@@ -461,7 +461,8 @@ export function App() {
   };
 
   const handleResetTemplate = () => {
-    if (confirm('Möchtest du das Layout auf das Demo-Template "M ONE Sanitär Silicon" zurücksetzen?')) {
+    if (confirm('Möchtest du das Layout auf das Original-Template "M ONE Sanitär Silicon 280ml" zurücksetzen?')) {
+      setCartridge(CARTRIDGE_CONFIGS['fischbach-310']);
       updateElementsWithHistory(DEFAULT_ELEMENTS);
       setSelectedElementId(null);
     }

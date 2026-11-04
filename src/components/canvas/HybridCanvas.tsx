@@ -4,6 +4,7 @@ import {
   LayoutElement,
   PrepressSettings,
   SpotColor,
+  TextElement,
 } from '../../types';
 import { applyPrepressFilters, applyHalftoneSimulation } from '../../utils/imageProcessing';
 
@@ -37,20 +38,25 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
   onDropFile,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 60, y: 40 });
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 50, y: 35 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Dragging elements
+  // Element interaction states
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
   const [isDraggingElement, setIsDraggingElement] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [elementStartPos, setElementStartPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Inline In-Canvas Text Editing on Double-Click
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [inlineEditText, setInlineEditText] = useState<string>('');
 
   // Cached raster images for canvas performance
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
   const processedImageCache = useRef<Map<string, HTMLCanvasElement>>(new Map());
 
-  // Pixels per mm at 100% zoom (3.78 px = 1 mm at ~96 DPI screen)
+  // Base Pixels per mm (3.7795 px = 1 mm at 96 DPI)
   const pxPerMm = 3.7795;
 
   // Pre-load images
@@ -68,36 +74,49 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     });
   }, [elements]);
 
-  // Main canvas render function
+  // Main canvas render function with True Screen-Pitch High-DPI (Retina / 4K Crispness at any zoom!)
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
     const totalWidthMm = cartridge.printableWidthMm + (settings.includeControlStrip ? 22 : 0);
     const totalHeightMm = cartridge.printableHeightMm;
 
-    const canvasWidthPx = Math.ceil(totalWidthMm * pxPerMm);
-    const canvasHeightPx = Math.ceil(totalHeightMm * pxPerMm);
+    // Display CSS pixels scaled by zoom
+    const cssWidthPx = Math.ceil(totalWidthMm * pxPerMm * zoom);
+    const cssHeightPx = Math.ceil(totalHeightMm * pxPerMm * zoom);
 
-    if (canvas.width !== canvasWidthPx || canvas.height !== canvasHeightPx) {
-      canvas.width = canvasWidthPx;
-      canvas.height = canvasHeightPx;
+    // Native device pixel ratio for 100% crisp vector display (no blur on 4K/Retina)
+    const dpr = Math.max(2, window.devicePixelRatio || 2);
+    const bufferWidthPx = Math.ceil(cssWidthPx * dpr);
+    const bufferHeightPx = Math.ceil(cssHeightPx * dpr);
+
+    if (canvas.width !== bufferWidthPx || canvas.height !== bufferHeightPx) {
+      canvas.width = bufferWidthPx;
+      canvas.height = bufferHeightPx;
     }
 
-    // Clear background
-    ctx.clearRect(0, 0, canvasWidthPx, canvasHeightPx);
+    canvas.style.width = cssWidthPx + 'px';
+    canvas.style.height = cssHeightPx + 'px';
+
+    ctx.save();
+    // Scale context directly by (zoom * dpr) so coordinates remain clean millimeter-based!
+    ctx.scale(zoom * dpr, zoom * dpr);
+
+    const displayWidthPx = Math.ceil(totalWidthMm * pxPerMm);
+    const displayHeightPx = Math.ceil(totalHeightMm * pxPerMm);
 
     // Fill cartridge background
     const isSinglePlate = settings.activeColorView !== 'composite';
-    ctx.fillStyle = isSinglePlate ? '#ffffff' : '#f4f5f7';
-    ctx.fillRect(0, 0, canvasWidthPx, canvasHeightPx);
+    ctx.fillStyle = isSinglePlate ? '#ffffff' : '#141518';
+    ctx.fillRect(0, 0, displayWidthPx, displayHeightPx);
 
     // Draw printable layout bounds & bleed
-    ctx.strokeStyle = '#d0d4dc';
+    ctx.strokeStyle = '#383d46';
     ctx.lineWidth = 1;
-    ctx.strokeRect(0, 0, canvasWidthPx, canvasHeightPx);
+    ctx.strokeRect(0, 0, displayWidthPx, displayHeightPx);
 
     // Draw Cartridge Seam / Overlap Safety Line (Nahtbereich)
     const seamX = (cartridge.printableWidthMm - cartridge.seamMarginMm) * pxPerMm;
@@ -107,7 +126,7 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.moveTo(seamX, 0);
-    ctx.lineTo(seamX, canvasHeightPx);
+    ctx.lineTo(seamX, displayHeightPx);
     ctx.stroke();
     ctx.restore();
 
@@ -172,36 +191,37 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
           ctx.stroke();
         }
       } else if (el.type === 'text') {
-        // If this text is an unedited PDF text overlay, skip drawing duplicate text
-        // so the original PDF artwork is 100% visible and uncorrupted!
-        if (el.isPdfTextOverlay && !el.isEdited) {
-          ctx.restore();
-          return;
+        // PREVENT DOUBLE-TEXT ON IMPORTED PDFS:
+        // If this text is an unedited PDF overlay, the base PDF page ALREADY has the original vector text drawn!
+        // We only render text if it is NOT a PDF overlay OR if the user has edited it!
+        const isPdfOverlayUnedited = el.isPdfTextOverlay && !el.isEdited;
+
+        if (!isPdfOverlayUnedited) {
+          // If edited PDF overlay, clean the background patch to hide the original text underneath!
+          if (el.isPdfTextOverlay && el.isEdited && el.backgroundColor) {
+            ctx.fillStyle = el.backgroundColor;
+            ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+          }
+
+          // High-precision vector text rendering
+          const fontSizePx = el.fontSize * (pxPerMm / 2.8346);
+          ctx.font = `${el.fontWeight} ${fontSizePx}px ${el.fontFamily}`;
+          ctx.fillStyle = isSinglePlate ? '#141414' : el.isNegative ? '#ffffff' : el.textColor;
+          ctx.textBaseline = 'top';
+
+          // Prepress Stroke Boost
+          if (el.strokeWidth > 0) {
+            ctx.strokeStyle = ctx.fillStyle;
+            ctx.lineWidth = el.strokeWidth * pxPerMm * 0.35;
+            ctx.strokeText(el.text, x, y);
+          }
+
+          const lines = el.text.split('\n');
+          const lineHeightPx = fontSizePx * (el.lineHeight || 1.15);
+          lines.forEach((line, idx) => {
+            ctx.fillText(line, x, y + idx * lineHeightPx);
+          });
         }
-
-        // If it was edited, draw a background patch first to seamlessly cover the original text
-        if (el.isPdfTextOverlay && el.isEdited) {
-          ctx.fillStyle = el.backgroundColor || (el.isNegative ? '#141414' : '#ffffff');
-          ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
-        }
-
-        const fontSizePx = el.fontSize * (pxPerMm / 2.8346);
-        ctx.font = `${el.fontWeight} ${fontSizePx}px ${el.fontFamily}`;
-        ctx.fillStyle = isSinglePlate ? '#141414' : el.isNegative ? '#ffffff' : el.textColor;
-        ctx.textBaseline = 'top';
-
-        // Prepress Stroke Boost
-        if (el.strokeWidth > 0) {
-          ctx.strokeStyle = ctx.fillStyle;
-          ctx.lineWidth = el.strokeWidth * pxPerMm * 0.35;
-          ctx.strokeText(el.text, x, y);
-        }
-
-        const lines = el.text.split('\n');
-        const lineHeightPx = fontSizePx * (el.lineHeight || 1.15);
-        lines.forEach((line, idx) => {
-          ctx.fillText(line, x, y + idx * lineHeightPx);
-        });
       } else if (el.type === 'image') {
         const cachedImg = imageCache.current.get(el.src);
         if (cachedImg && cachedImg.complete) {
@@ -246,17 +266,17 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
           ctx.drawImage(svgImg, x, y, w, h);
         }
       } else if (el.type === 'table') {
-        ctx.fillStyle = isSinglePlate ? '#ffffff' : el.fillColor || '#ffffff';
+        ctx.fillStyle = isSinglePlate ? '#ffffff' : el.fillColor || '#1E2024';
         ctx.fillRect(x, y, w, h);
         ctx.strokeStyle = isSinglePlate ? '#141414' : el.strokeColor;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = Math.max(1, el.strokeWidth * pxPerMm * 0.35);
         ctx.strokeRect(x, y, w, h);
 
         if (el.tableData && el.tableData.length > 0) {
           const rowH = h / el.tableData.length;
-          const colW = w / 2;
-          ctx.font = `600 ${9 * (pxPerMm / 2.8346)}px Helvetica, Arial, sans-serif`;
-          ctx.fillStyle = isSinglePlate ? '#141414' : '#141414';
+          const colW = w * 0.52;
+          ctx.font = `bold ${8.5 * (pxPerMm / 2.8346)}px Helvetica, Arial, sans-serif`;
+          ctx.fillStyle = isSinglePlate ? '#141414' : '#FFFFFF';
           ctx.textBaseline = 'middle';
 
           el.tableData.forEach((row, rIdx) => {
@@ -271,9 +291,9 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
             ctx.lineTo(x + colW, y + h);
             ctx.stroke();
 
-            ctx.fillText(row[0] || '', x + 6, rowY + rowH / 2);
-            ctx.font = `normal ${8.5 * (pxPerMm / 2.8346)}px Helvetica, Arial, sans-serif`;
-            ctx.fillText(row[1] || '', x + colW + 6, rowY + rowH / 2);
+            ctx.fillText(row[0] || '', x + 4, rowY + rowH / 2);
+            ctx.font = `normal ${8.0 * (pxPerMm / 2.8346)}px Helvetica, Arial, sans-serif`;
+            ctx.fillText(row[1] || '', x + colW + 4, rowY + rowH / 2);
           });
         }
       }
@@ -284,10 +304,28 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     // Render Color Control Strip
     if (settings.includeControlStrip) {
       const stripX = cartridge.printableWidthMm * pxPerMm + 14;
-      renderControlStrip(ctx, stripX, canvasHeightPx, spotColors);
+      renderControlStrip(ctx, stripX, displayHeightPx, spotColors);
     }
 
-    // Render Selection Outline & Handles
+    // Hover Highlight (Subtle dashed outline)
+    if (hoveredElementId && hoveredElementId !== selectedElementId) {
+      const hov = elements.find((e) => e.id === hoveredElementId);
+      if (hov && !hov.isHidden) {
+        const hx = hov.x * pxPerMm;
+        const hy = hov.y * pxPerMm;
+        const hw = hov.width * pxPerMm;
+        const hh = hov.height * pxPerMm;
+
+        ctx.save();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 2]);
+        ctx.strokeRect(hx - 1, hy - 1, hw + 2, hh + 2);
+        ctx.restore();
+      }
+    }
+
+    // Selected Element Bounding Box & 8 Transformation Handles
     if (selectedElementId) {
       const sel = elements.find((e) => e.id === selectedElementId);
       if (sel && !sel.isHidden) {
@@ -297,37 +335,59 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
         const sh = sel.height * pxPerMm;
 
         ctx.save();
+        // Selection Box
         ctx.strokeStyle = '#ff6600';
         ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
+        ctx.setLineDash([4, 3]);
         ctx.strokeRect(sx - 2, sy - 2, sw + 4, sh + 4);
 
+        // 8 Handles
         ctx.setLineDash([]);
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = '#ff6600';
         ctx.lineWidth = 1.5;
+        const handleSize = 6;
         const handles = [
-          { x: sx - 4, y: sy - 4 },
-          { x: sx + sw, y: sy - 4 },
-          { x: sx - 4, y: sy + sh },
-          { x: sx + sw, y: sy + sh },
+          { x: sx - 3, y: sy - 3 },
+          { x: sx + sw / 2 - 3, y: sy - 3 },
+          { x: sx + sw - 3, y: sy - 3 },
+          { x: sx - 3, y: sy + sh / 2 - 3 },
+          { x: sx + sw - 3, y: sy + sh / 2 - 3 },
+          { x: sx - 3, y: sy + sh - 3 },
+          { x: sx + sw / 2 - 3, y: sy + sh - 3 },
+          { x: sx + sw - 3, y: sy + sh - 3 },
         ];
         handles.forEach((h) => {
-          ctx.fillRect(h.x, h.y, 8, 8);
-          ctx.strokeRect(h.x, h.y, 8, 8);
+          ctx.fillRect(h.x, h.y, handleSize, handleSize);
+          ctx.strokeRect(h.x, h.y, handleSize, handleSize);
         });
+
+        // Top Rotation Pin
+        ctx.beginPath();
+        ctx.moveTo(sx + sw / 2, sy - 2);
+        ctx.lineTo(sx + sw / 2, sy - 14);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(sx + sw / 2, sy - 16, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
         ctx.restore();
       }
     }
+
+    ctx.restore(); // Restore dpr & zoom scale
 
     if (onCanvasUpdated) onCanvasUpdated();
   }, [
     elements,
     selectedElementId,
+    hoveredElementId,
     cartridge,
     spotColors,
     settings,
     canvasRef,
+    zoom,
     onCanvasUpdated,
   ]);
 
@@ -338,41 +398,39 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
   const renderControlStrip = (
     ctx: CanvasRenderingContext2D,
     x: number,
-    totalH: number,
+    _totalH: number,
     colors: SpotColor[]
   ) => {
     ctx.save();
-    ctx.fillStyle = '#333333';
+    ctx.fillStyle = '#8e96a4';
     ctx.font = 'bold 8px monospace';
     ctx.fillText('KONTROLLSTREIFEN', x - 4, 16);
 
-    drawPasskreuz(ctx, x + 16, 40);
+    drawPasskreuz(ctx, x + 16, 38);
 
     colors.forEach((c, idx) => {
-      const cy = 65 + idx * 45;
+      const cy = 60 + idx * 42;
       ctx.fillStyle = c.hex;
-      ctx.fillRect(x, cy, 32, 16);
-      ctx.strokeStyle = '#141414';
+      ctx.fillRect(x, cy, 32, 14);
+      ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 0.5;
-      ctx.strokeRect(x, cy, 32, 16);
+      ctx.strokeRect(x, cy, 32, 14);
 
       ctx.globalAlpha = 0.5;
-      ctx.fillRect(x, cy + 18, 16, 12);
+      ctx.fillRect(x, cy + 16, 16, 10);
       ctx.globalAlpha = 0.25;
-      ctx.fillRect(x + 16, cy + 18, 16, 12);
+      ctx.fillRect(x + 16, cy + 16, 16, 10);
       ctx.globalAlpha = 1.0;
 
-      ctx.fillStyle = '#666';
+      ctx.fillStyle = '#a0aab8';
       ctx.font = '7px sans-serif';
-      ctx.fillText(c.id.toUpperCase(), x, cy + 40);
+      ctx.fillText(c.id.toUpperCase(), x, cy + 36);
     });
-
-    drawPasskreuz(ctx, x + 16, totalH - 45);
     ctx.restore();
   };
 
   const drawPasskreuz = (ctx: CanvasRenderingContext2D, cx: number, cy: number) => {
-    ctx.strokeStyle = '#141414';
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(cx, cy, 10, 0, Math.PI * 2);
@@ -381,47 +439,77 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     ctx.moveTo(cx - 14, cy);
     ctx.lineTo(cx + 14, cy);
     ctx.moveTo(cx, cy - 14);
-    ctx.lineTo(cx, cy + 14);
+    ctx.lineTo(cx + 14, cy);
     ctx.stroke();
-    ctx.fillStyle = '#141414';
+    ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
     ctx.fill();
   };
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-    const newZoom = Math.min(3.5, Math.max(0.35, zoom * zoomFactor));
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+    const newZoom = Math.min(4.0, Math.max(0.3, zoom * zoomFactor));
     onZoomChange(newZoom);
   };
 
+  // Helper to convert client mouse coordinate into document millimeter position
+  const getCanvasMouseMm = (e: React.MouseEvent) => {
+    if (!canvasRef.current) return { x: 0, y: 0 };
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mmX = (e.clientX - rect.left) / zoom / pxPerMm;
+    const mmY = (e.clientY - rect.top) / zoom / pxPerMm;
+    return { x: mmX, y: mmY };
+  };
+
+  // Element hit-testing (prioritizing foreground elements)
+  const findElementAtPosition = (mmX: number, mmY: number): LayoutElement | undefined => {
+    // Pass 1: Foreground elements (texts, shapes, SVGs, tables, photos)
+    let hit = [...elements].reverse().find((el) => {
+      if (el.isHidden || el.isLocked) return false;
+      // Skip background artwork if it covers the whole document
+      if (el.layerGroup === 'background' && el.width >= cartridge.printableWidthMm * 0.8) return false;
+      return (
+        mmX >= el.x - 1.0 &&
+        mmX <= el.x + el.width + 1.0 &&
+        mmY >= el.y - 1.0 &&
+        mmY <= el.y + el.height + 1.0
+      );
+    });
+
+    // Pass 2: Background elements if no foreground element was hit
+    if (!hit) {
+      hit = [...elements].reverse().find((el) => {
+        if (el.isHidden || el.isLocked) return false;
+        return (
+          mmX >= el.x &&
+          mmX <= el.x + el.width &&
+          mmY >= el.y &&
+          mmY <= el.y + el.height
+        );
+      });
+    }
+
+    return hit;
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (editingTextId) return; // Ignore while typing inline
+
     if (e.button === 1 || e.altKey) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
       return;
     }
 
-    if (!canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const mouseCanvasX = (e.clientX - rect.left) / zoom / pxPerMm;
-    const mouseCanvasY = (e.clientY - rect.top) / zoom / pxPerMm;
-
-    const clicked = [...elements].reverse().find((el) => {
-      if (el.isHidden) return false;
-      return (
-        mouseCanvasX >= el.x &&
-        mouseCanvasX <= el.x + el.width &&
-        mouseCanvasY >= el.y &&
-        mouseCanvasY <= el.y + el.height
-      );
-    });
+    const { x: mouseMmX, y: mouseMmY } = getCanvasMouseMm(e);
+    const clicked = findElementAtPosition(mouseMmX, mouseMmY);
 
     if (clicked) {
       onSelectElement(clicked.id);
       setIsDraggingElement(true);
-      setDragStart({ x: mouseCanvasX, y: mouseCanvasY });
+      setDragStart({ x: mouseMmX, y: mouseMmY });
       setElementStartPos({ x: clicked.x, y: clicked.y });
     } else {
       onSelectElement(null);
@@ -436,13 +524,17 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       return;
     }
 
-    if (isDraggingElement && selectedElementId && canvasRef.current) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      const currentMouseX = (e.clientX - rect.left) / zoom / pxPerMm;
-      const currentMouseY = (e.clientY - rect.top) / zoom / pxPerMm;
+    const { x: mouseMmX, y: mouseMmY } = getCanvasMouseMm(e);
 
-      const deltaX = currentMouseX - dragStart.x;
-      const deltaY = currentMouseY - dragStart.y;
+    // Update hover highlight
+    if (!isDraggingElement) {
+      const hovered = findElementAtPosition(mouseMmX, mouseMmY);
+      setHoveredElementId(hovered?.id || null);
+    }
+
+    if (isDraggingElement && selectedElementId) {
+      const deltaX = mouseMmX - dragStart.x;
+      const deltaY = mouseMmY - dragStart.y;
 
       const updated = elements.map((el) => {
         if (el.id === selectedElementId && !el.isLocked) {
@@ -463,6 +555,32 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     setIsDraggingElement(false);
   };
 
+  // Double-Click on text element to activate inline text editing
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    const { x: mouseMmX, y: mouseMmY } = getCanvasMouseMm(e);
+    const clicked = findElementAtPosition(mouseMmX, mouseMmY);
+    if (clicked && clicked.type === 'text') {
+      setEditingTextId(clicked.id);
+      setInlineEditText((clicked as TextElement).text);
+    }
+  };
+
+  const handleSaveInlineText = () => {
+    if (!editingTextId) return;
+    const updated = elements.map((el) => {
+      if (el.id === editingTextId && el.type === 'text') {
+        return {
+          ...el,
+          text: inlineEditText,
+          isEdited: true, // Flags that this text was modified, triggering background patch and clean vector redraw!
+        };
+      }
+      return el;
+    });
+    onElementsChange(updated);
+    setEditingTextId(null);
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
@@ -471,14 +589,13 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
     e.preventDefault();
     const files = e.dataTransfer.files;
     if (files.length === 0) return;
-
-    const file = files[0];
     if (onDropFile) {
-      onDropFile(file);
+      onDropFile(files[0]);
     }
   };
 
   const selectedElement = elements.find((e) => e.id === selectedElementId);
+  const editingElement = elements.find((e) => e.id === editingTextId) as TextElement | undefined;
 
   return (
     <div
@@ -487,62 +604,90 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
+      onDoubleClick={handleDoubleClick}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
-      className="relative flex-1 h-full w-full bg-[#0d0e11] overflow-hidden select-none cursor-crosshair"
+      className="relative flex-1 h-full w-full bg-[#0a0b0e] overflow-hidden select-none cursor-crosshair"
     >
-      {/* Millimeter Grid Background & Measurement Markings */}
+      {/* Dynamic Panned Canvas Container (Canvas itself handles high-DPI scaling) */}
       <div
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transform: `translate(${pan.x}px, ${pan.y}px)`,
           transformOrigin: '0 0',
         }}
-        className="absolute transition-transform duration-75 ease-out"
+        className="absolute transition-transform duration-75 ease-out shadow-2xl"
       >
-        {/* Rulers / Dimension Badges */}
-        <div className="absolute -top-7 left-0 right-0 flex items-center justify-between text-[11px] font-mono text-zinc-400 bg-[#16171a] px-3 py-1 rounded border border-[#2a2d34] shadow-md">
-          <span>
-            Breite: <strong className="text-orange-400">{cartridge.printableWidthMm} mm</strong>{' '}
-            (Umfang {cartridge.totalCircumferenceMm} mm)
-          </span>
-          <span>
-            Höhe: <strong className="text-orange-400">{cartridge.printableHeightMm} mm</strong>
-          </span>
-          <span className="text-red-400">Naht-Abstand: {cartridge.seamMarginMm} mm</span>
-        </div>
-
-        {/* Master Canvas */}
         <canvas
           ref={canvasRef}
-          className="shadow-2xl border border-[#3e424d] rounded-sm bg-white"
+          className="border border-[#2a2c34] rounded shadow-[0_12px_40px_rgba(0,0,0,0.8)]"
         />
 
-        {/* Inline Hint when text is selected */}
-        {selectedElement && selectedElement.type === 'text' && (
+        {/* In-Canvas Inline Textarea Overlay when Double-Clicking Text */}
+        {editingElement && (
           <div
             style={{
               position: 'absolute',
-              left: `${selectedElement.x * pxPerMm}px`,
-              top: `${selectedElement.y * pxPerMm}px`,
-              minWidth: `${selectedElement.width * pxPerMm}px`,
+              left: `${editingElement.x * pxPerMm * zoom - 2}px`,
+              top: `${editingElement.y * pxPerMm * zoom - 2}px`,
+              width: `${Math.max(120, editingElement.width * pxPerMm * zoom + 12)}px`,
+              minHeight: `${Math.max(30, editingElement.height * pxPerMm * zoom + 8)}px`,
+              zIndex: 100,
             }}
-            className="pointer-events-none"
+            className="p-1 bg-[#181a20] border-2 border-[#ff6600] rounded shadow-2xl flex flex-col gap-1.5"
+            onMouseDown={(e) => e.stopPropagation()}
           >
-            <div className="absolute -top-6 left-0 bg-orange-600 text-white font-mono text-[10px] px-2 py-0.5 rounded shadow pointer-events-auto">
-              Text anklicken & in der Optionsleiste oben editieren
+            <textarea
+              autoFocus
+              value={inlineEditText}
+              onChange={(e) => setInlineEditText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  handleSaveInlineText();
+                } else if (e.key === 'Escape') {
+                  setEditingTextId(null);
+                }
+              }}
+              className="w-full bg-[#101216] text-white text-xs font-mono p-1.5 rounded border border-[#333] resize-y outline-none focus:border-[#ff6600]"
+              rows={Math.min(8, Math.max(2, inlineEditText.split('\n').length))}
+            />
+            <div className="flex items-center justify-between text-[10px] text-gray-400">
+              <span>Strg+Enter zum Speichern • Esc zum Abbrechen</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setEditingTextId(null)}
+                  className="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-white"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={handleSaveInlineText}
+                  className="px-2 py-0.5 rounded bg-[#ff6600] hover:bg-[#e05a00] text-white font-bold"
+                >
+                  Übernehmen
+                </button>
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Floating Canvas Quick Info Pill */}
-      <div className="absolute bottom-4 left-4 flex items-center gap-2 bg-[#18191c]/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#2a2d34] text-xs text-zinc-300 shadow-xl pointer-events-none">
-        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-        <span>Hybrid Canvas: Vektor + WebGL 1c-Filter</span>
-        <span className="text-zinc-500">|</span>
-        <span className="font-mono text-orange-400">{Math.round(zoom * 100)}%</span>
-        <span className="text-zinc-500">|</span>
-        <span>Drag & Drop: Beliebige PDF-, SVG- oder Bilddatei direkt auf die Fläche ziehen!</span>
+      {/* Quick HUD overlay in bottom-left */}
+      <div className="absolute bottom-4 left-4 flex items-center gap-3 bg-[#16181f]/90 backdrop-blur border border-[#2b2e38] px-3.5 py-1.5 rounded-lg text-xs text-gray-300 pointer-events-none shadow-xl">
+        <span className="font-mono text-[#ff6600] font-bold">
+          {Math.round(zoom * 100)}%
+        </span>
+        <span className="w-px h-3 bg-gray-700" />
+        <span>
+          {cartridge.printableWidthMm} × {cartridge.printableHeightMm} mm
+        </span>
+        {selectedElement && (
+          <>
+            <span className="w-px h-3 bg-gray-700" />
+            <span className="text-white font-medium truncate max-w-[200px]">
+              {selectedElement.name}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

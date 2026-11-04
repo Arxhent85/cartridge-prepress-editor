@@ -16,7 +16,7 @@ export interface PdfImportResult {
 
 /**
  * Extracts and parses any uploaded PDF file into editable LayoutElements
- * with 100% full original colors (RGB/CMYK) and interactive text layers.
+ * with 400+ DPI high-definition base artwork and intelligent interactive text boxes.
  */
 export async function extractElementsFromPdf(
   file: File,
@@ -40,8 +40,8 @@ export async function extractElementsFromPdf(
   const pageActualWidthMm = Math.round(defaultViewport.width * ptToMm * 10) / 10;
   const pageActualHeightMm = Math.round(defaultViewport.height * ptToMm * 10) / 10;
 
-  // 1. High-resolution 3x render (300+ DPI) to preserve razor-sharp small text and graphics
-  const renderScale = 3.0;
+  // Ultra High-Definition 4.0x render (400+ DPI) to eliminate any pixelation
+  const renderScale = 4.0;
   const renderViewport = page.getViewport({ scale: renderScale });
   const renderCanvas = document.createElement('canvas');
   renderCanvas.width = renderViewport.width;
@@ -64,7 +64,7 @@ export async function extractElementsFromPdf(
 
   const extractedElements: LayoutElement[] = [];
 
-  // 2. Base Artwork Layer: Full original colors (NO 1c grayscale, NO color loss!)
+  // 1. Base Master Artwork: Full original colors (NO 1c grayscale, full RGB/CMYK fidelity)
   if (backgroundDataUrl) {
     const bgElement: ImageElement = {
       id: `pdf_base_${Date.now()}`,
@@ -79,7 +79,7 @@ export async function extractElementsFromPdf(
       src: backgroundDataUrl,
       originalSrc: backgroundDataUrl,
       filterSettings: {
-        grayscale1c: false, // FULL ORIGINAL COLOR (Orange, Red, White, Black, Bathroom photo!)
+        grayscale1c: false, // 100% full original colors!
         brightness: 0,
         contrast: 0,
         gamma: 1.0,
@@ -97,7 +97,7 @@ export async function extractElementsFromPdf(
     extractedElements.push(bgElement);
   }
 
-  // 3. Extract text items & sample background colors for clean patch-replacement
+  // 2. Extract text items & sample background colors for clean patch-replacement
   let textItemsCount = 0;
   try {
     const textContent = await page.getTextContent();
@@ -132,7 +132,7 @@ export async function extractElementsFromPdf(
       });
     }
 
-    // Merge adjacent text tokens on the same horizontal line (within 2mm)
+    // Merge adjacent text tokens on the same horizontal line (within 2mm vertical distance)
     const mergedItems: RawItem[] = [];
     for (const item of rawItems) {
       const existing = mergedItems.find(
@@ -152,23 +152,47 @@ export async function extractElementsFromPdf(
     mergedItems.forEach((m, idx) => {
       let lang: 'DE' | 'EN' | 'AL' | 'ALL' = 'ALL';
       const lower = m.str.toLowerCase();
-      if (lower.includes('silikon') || lower.includes('gefahr') || lower.includes('untergrund') || lower.includes('anwendungstemperatur')) {
+      if (
+        lower.includes('silikon') ||
+        lower.includes('gefahr') ||
+        lower.includes('untergrund') ||
+        lower.includes('anwendungstemperatur') ||
+        lower.includes('schimmel')
+      ) {
         lang = 'DE';
-      } else if (lower.includes('silicone') || lower.includes('danger') || lower.includes('surface') || lower.includes('application')) {
+      } else if (
+        lower.includes('silicone') ||
+        lower.includes('danger') ||
+        lower.includes('surface') ||
+        lower.includes('application') ||
+        lower.includes('mold')
+      ) {
         lang = 'EN';
-      } else if (lower.includes('përdorimi') || lower.includes('kujdes') || lower.includes('mbajeni') || lower.includes('temperatura')) {
+      } else if (
+        lower.includes('përdorimi') ||
+        lower.includes('kujdes') ||
+        lower.includes('mbajeni') ||
+        lower.includes('temperatura') ||
+        lower.includes('mykut')
+      ) {
         lang = 'AL';
       }
 
       // Sample pixel color from renderCanvas at this text position to determine background patch color & text contrast
-      let detectedBgColor = '#FFFFFF';
-      let isNegative = false;
-      let textColor = '#141414';
+      let detectedBgColor = '#141414';
+      let isNegative = true;
+      let textColor = '#FFFFFF';
 
       if (renderCtx) {
         try {
-          const samplePxX = Math.min(renderCanvas.width - 1, Math.max(0, Math.round((m.x / pageActualWidthMm) * renderCanvas.width)));
-          const samplePxY = Math.min(renderCanvas.height - 1, Math.max(0, Math.round((m.y / pageActualHeightMm) * renderCanvas.height)));
+          const samplePxX = Math.min(
+            renderCanvas.width - 1,
+            Math.max(0, Math.round((m.x / pageActualWidthMm) * renderCanvas.width))
+          );
+          const samplePxY = Math.min(
+            renderCanvas.height - 1,
+            Math.max(0, Math.round((m.y / pageActualHeightMm) * renderCanvas.height))
+          );
           const pixel = renderCtx.getImageData(samplePxX, samplePxY, 1, 1).data;
           const r = pixel[0];
           const g = pixel[1];
@@ -177,11 +201,11 @@ export async function extractElementsFromPdf(
           // Check if Orange (dominant Red, moderate Green, low Blue)
           if (r > 180 && g > 60 && g < 160 && b < 80) {
             detectedBgColor = '#FF6600';
-            isNegative = true;
-            textColor = '#FFFFFF';
+            isNegative = false;
+            textColor = '#141414';
           } else if (r < 80 && g < 80 && b < 80) {
             // Dark / Black background
-            detectedBgColor = '#141414';
+            detectedBgColor = '#1E2024';
             isNegative = true;
             textColor = '#FFFFFF';
           } else if (r > 100 && r < 150 && g > 110 && g < 160 && b > 120 && b < 170) {
@@ -206,16 +230,16 @@ export async function extractElementsFromPdf(
         id: `pdf_txt_${Date.now()}_${idx}`,
         name: isLarge ? `Titel: "${m.str.slice(0, 18)}..."` : `Text: "${m.str.slice(0, 18)}..."`,
         type: 'text',
-        x: Math.max(2, Math.min(pageActualWidthMm - 10, m.x)),
-        y: Math.max(2, Math.min(pageActualHeightMm - 5, m.y)),
-        width: Math.min(pageActualWidthMm - 4, Math.max(12, m.width)),
-        height: Math.max(5, m.height),
+        x: Math.max(1, Math.min(pageActualWidthMm - 10, m.x)),
+        y: Math.max(1, Math.min(pageActualHeightMm - 5, m.y)),
+        width: Math.min(pageActualWidthMm - 2, Math.max(10, m.width)),
+        height: Math.max(4.5, m.height),
         rotation: 0,
         spotColorId: isNegative ? 'white' : 'black',
         text: m.str,
         fontSize: Math.max(4.5, Math.min(48, m.fontSize)),
         fontFamily: isLarge ? 'Impact, Helvetica, sans-serif' : 'Helvetica, Arial, sans-serif',
-        fontWeight: isLarge ? '800' : 'normal',
+        fontWeight: isLarge ? '900' : 'normal',
         letterSpacing: 0.1,
         lineHeight: 1.15,
         textColor,

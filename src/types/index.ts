@@ -37,7 +37,7 @@ export interface BaseElement {
   spotColorId: SpotColorId;
   isLocked: boolean;
   isHidden: boolean;
-  layerGroup: 'background' | 'photo' | 'bars' | 'logos' | 'text_multilingual';
+  layerGroup: 'background' | 'photo' | 'images' | 'bars' | 'logos' | 'text_multilingual';
 }
 
 export interface TextElement extends BaseElement {
@@ -45,7 +45,7 @@ export interface TextElement extends BaseElement {
   text: string;
   fontSize: number; // in pt
   fontFamily: string;
-  fontWeight: 'normal' | 'bold' | '600' | '800';
+  fontWeight: 'normal' | 'bold' | '600' | '800' | '900' | string;
   fontStyle?: 'normal' | 'italic';
   letterSpacing: number; // tracking in pt
   lineHeight: number;
