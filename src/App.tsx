@@ -421,6 +421,20 @@ export function App() {
       );
 
       if (response.success && response.elements.length > 0) {
+        if (response.pdfWidthMm && response.pdfHeightMm) {
+          setCartridge({
+            manufacturer: 'universal-280',
+            name: `${file.name.replace(/\.[^/.]+$/, '')} (Original PDF-Format)`,
+            volume: '280 / 310 ml',
+            diameterMm: 47.0,
+            totalCircumferenceMm: response.pdfWidthMm,
+            printableWidthMm: response.pdfWidthMm,
+            printableHeightMm: response.pdfHeightMm,
+            totalLengthMm: response.pdfHeightMm + 10,
+            bleedMm: 2.0,
+            seamMarginMm: 3.0,
+          });
+        }
         updateElementsWithHistory(response.elements);
         setSelectedElementId(null);
         setImportNotification({

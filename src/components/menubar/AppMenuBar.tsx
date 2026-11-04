@@ -180,9 +180,10 @@ export const AppMenuBar: React.FC<AppMenuBarProps> = ({
                   onResetDemo();
                   closeMenu();
                 }}
-                className="px-3 py-1.5 text-left hover:bg-orange-500 hover:text-white flex items-center justify-between text-zinc-400"
+                className="px-3 py-1.5 text-left hover:bg-orange-500 hover:text-white flex items-center justify-between text-zinc-300"
               >
-                <span>Referenz-Vorlage "M ONE" laden</span>
+                <span>M ONE 280ml (Original-Vorlage)</span>
+                <span className="text-[10px] text-orange-400 font-mono">280ml</span>
               </button>
               <div className="h-[1px] bg-[#2a2d34] my-1" />
               <button

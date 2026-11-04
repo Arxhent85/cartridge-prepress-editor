@@ -38,6 +38,7 @@ export const ElementInspector: React.FC<ElementInspectorProps> = ({
     onUpdateElement({
       ...element,
       [key]: value,
+      ...(isText ? { isEdited: true } : {}),
     });
   };
 

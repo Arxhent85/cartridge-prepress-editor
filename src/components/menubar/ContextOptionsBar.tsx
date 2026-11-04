@@ -63,7 +63,7 @@ export const ContextOptionsBar: React.FC<ContextOptionsBarProps> = ({
             <select
               value={(selectedElement as TextElement).fontFamily}
               onChange={(e) =>
-                onUpdateElement({ ...selectedElement, fontFamily: e.target.value } as TextElement)
+                onUpdateElement({ ...selectedElement, fontFamily: e.target.value, isEdited: true } as TextElement)
               }
               className="bg-[#202228] border border-[#343844] text-white rounded px-2 py-1 text-xs"
             >
@@ -86,6 +86,7 @@ export const ContextOptionsBar: React.FC<ContextOptionsBarProps> = ({
                   onUpdateElement({
                     ...selectedElement,
                     fontSize: parseFloat(e.target.value) || 6,
+                    isEdited: true,
                   } as TextElement)
                 }
                 className="w-14 bg-[#202228] border border-[#343844] text-white rounded px-1.5 py-0.5 text-xs text-center"
@@ -102,6 +103,7 @@ export const ContextOptionsBar: React.FC<ContextOptionsBarProps> = ({
                   onUpdateElement({
                     ...selectedElement,
                     isNegative: e.target.checked,
+                    isEdited: true,
                   } as TextElement)
                 }
                 className="accent-orange-500 w-3.5 h-3.5"
@@ -121,6 +123,7 @@ export const ContextOptionsBar: React.FC<ContextOptionsBarProps> = ({
                   onUpdateElement({
                     ...selectedElement,
                     strokeWidth: Math.round(((selectedElement as TextElement).strokeWidth + 0.1) * 10) / 10,
+                    isEdited: true,
                   } as TextElement)
                 }
                 className="px-1.5 py-0.2 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-white"

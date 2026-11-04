@@ -172,6 +172,19 @@ export const HybridCanvas: React.FC<HybridCanvasProps> = ({
           ctx.stroke();
         }
       } else if (el.type === 'text') {
+        // If this text is an unedited PDF text overlay, skip drawing duplicate text
+        // so the original PDF artwork is 100% visible and uncorrupted!
+        if (el.isPdfTextOverlay && !el.isEdited) {
+          ctx.restore();
+          return;
+        }
+
+        // If it was edited, draw a background patch first to seamlessly cover the original text
+        if (el.isPdfTextOverlay && el.isEdited) {
+          ctx.fillStyle = el.backgroundColor || (el.isNegative ? '#141414' : '#ffffff');
+          ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
+        }
+
         const fontSizePx = el.fontSize * (pxPerMm / 2.8346);
         ctx.font = `${el.fontWeight} ${fontSizePx}px ${el.fontFamily}`;
         ctx.fillStyle = isSinglePlate ? '#141414' : el.isNegative ? '#ffffff' : el.textColor;

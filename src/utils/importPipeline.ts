@@ -5,6 +5,8 @@ export interface FileImportResponse {
   elements: LayoutElement[];
   message?: string;
   success: boolean;
+  pdfWidthMm?: number;
+  pdfHeightMm?: number;
 }
 
 /**
@@ -25,8 +27,10 @@ export async function parseUploadedFileWithReport(
       if (result.elements.length > 0) {
         return {
           elements: result.elements,
-          message: `PDF erfolgreich geladen! ${result.extractedTextsCount} Textblöcke und Drucklayout extrahiert.`,
+          message: `PDF erfolgreich geladen! ${result.extractedTextsCount} Textblöcke und Drucklayout in Originalfarben extrahiert.`,
           success: true,
+          pdfWidthMm: result.widthMm,
+          pdfHeightMm: result.heightMm,
         };
       }
     } catch (err: any) {
@@ -58,7 +62,7 @@ export async function parseUploadedFileWithReport(
           },
           ...currentElements,
         ],
-        message: `PDF geladen. Konnte komplexe Vektoren nicht vollständig parsen (${err?.message || 'Standardfallback'}).`,
+        message: `PDF geladen. Fehler beim vollständigen Rendern: ${err?.message || 'Standardfallback'}.`,
         success: true,
       };
     }
@@ -111,14 +115,14 @@ export async function parseUploadedFileWithReport(
         src: dataUrl,
         originalSrc: dataUrl,
         filterSettings: {
-          grayscale1c: true,
+          grayscale1c: false, // Default to full color!
           brightness: 0,
-          contrast: 10,
-          gamma: 1.1,
-          dotGainCompensation: 20,
-          unsharpMask: 30,
-          levelsMin: 10,
-          levelsMax: 245,
+          contrast: 0,
+          gamma: 1.0,
+          dotGainCompensation: 0,
+          unsharpMask: 0,
+          levelsMin: 0,
+          levelsMax: 255,
           invert: false,
         },
         isLocked: false,
@@ -127,7 +131,7 @@ export async function parseUploadedFileWithReport(
       };
       return {
         elements: [...currentElements, newImg],
-        message: `Bild "${file.name}" als 1c-Druckebene eingefügt.`,
+        message: `Bild "${file.name}" eingefügt.`,
         success: true,
       };
     } catch (e: any) {

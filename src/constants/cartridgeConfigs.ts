@@ -37,6 +37,18 @@ export const CARTRIDGE_CONFIGS: Record<ManufacturerProfile, CartridgeConfig> = {
     bleedMm: 2.0,
     seamMarginMm: 3.0,
   },
+  'custom-pdf': {
+    manufacturer: 'custom-pdf',
+    name: 'Benutzerdefiniertes PDF-Druckformat',
+    volume: '280 / 310 ml',
+    diameterMm: 47.0,
+    totalCircumferenceMm: 148.0,
+    printableWidthMm: 148.0,
+    printableHeightMm: 205.0,
+    totalLengthMm: 215.0,
+    bleedMm: 2.0,
+    seamMarginMm: 3.0,
+  },
 };
 
 export const DEFAULT_SPOT_COLORS: SpotColor[] = [

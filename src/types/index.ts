@@ -53,6 +53,9 @@ export interface TextElement extends BaseElement {
   isNegative: boolean; // negative/reverse text on dark background
   strokeWidth: number; // in pt (for prepress stroke boosting)
   language?: 'DE' | 'EN' | 'AL' | 'ALL';
+  isEdited?: boolean;
+  backgroundColor?: string;
+  isPdfTextOverlay?: boolean;
 }
 
 export interface ImageElement extends BaseElement {
@@ -61,6 +64,7 @@ export interface ImageElement extends BaseElement {
   originalSrc: string;
   filterSettings: ImageFilterSettings;
   maskPoints?: { x: number; y: number }[];
+  isMasterPdfArtwork?: boolean;
 }
 
 export interface SvgElement extends BaseElement {
@@ -83,26 +87,26 @@ export interface ShapeElement extends BaseElement {
 
 export type LayoutElement = TextElement | ImageElement | SvgElement | ShapeElement;
 
-export type ManufacturerProfile = 'fischbach-310' | 'gfv-310' | 'universal-280';
+export type ManufacturerProfile = 'fischbach-310' | 'gfv-310' | 'universal-280' | 'custom-pdf';
 
 export interface CartridgeConfig {
   manufacturer: ManufacturerProfile;
   name: string;
   volume: string;
-  printableWidthMm: number; // Flat unwrapped circumference available for print
-  printableHeightMm: number; // Height along the cartridge body
+  printableWidthMm: number;
+  printableHeightMm: number;
   totalCircumferenceMm: number;
   diameterMm: number;
   totalLengthMm: number;
   bleedMm: number;
-  seamMarginMm: number; // Overlap or seam safety gap for round screen printing
+  seamMarginMm: number;
 }
 
 export interface PrepressSettings {
   manufacturerProfile: ManufacturerProfile;
-  trappingWidthPt: number; // 0.25 to 1.0 pt
-  whiteUnderlayChokeMm: number; // 0.10 to 0.25 mm (typical 0.15mm)
-  dotGainCurvePercent: number; // 15 to 25% (default 20%)
+  trappingWidthPt: number;
+  whiteUnderlayChokeMm: number;
+  dotGainCurvePercent: number;
   halftoneMode: 'none' | '36_lpcm' | '48_lpcm' | 'fm_stochastic';
   activeColorView: 'composite' | 'plate_white' | 'plate_black' | 'plate_orange' | 'plate_red' | 'plate_manhattan';
   includeControlStrip: boolean;

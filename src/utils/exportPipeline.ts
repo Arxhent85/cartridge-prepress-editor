@@ -64,6 +64,9 @@ export function generateLayoutSVG(
         svgContent += `  <line x1="${el.points[0].x * mmToPt}" y1="${el.points[0].y * mmToPt}" x2="${el.points[1].x * mmToPt}" y2="${el.points[1].y * mmToPt}" stroke="${colorHex}" stroke-width="${el.strokeWidth * mmToPt}" stroke-linecap="round"/>\n`;
       }
     } else if (el.type === 'text') {
+      if ((el as any).isPdfTextOverlay && !(el as any).isEdited) {
+        continue;
+      }
       const fontSizePt = el.fontSize * 1.33;
       const stroke = el.strokeWidth > 0 ? `stroke="${colorHex}" stroke-width="${el.strokeWidth * mmToPt * 0.3}"` : '';
       const textFill = singlePlateId ? '#000000' : el.textColor;
@@ -249,6 +252,9 @@ function renderElementsToPDFPage(
         });
       }
     } else if (el.type === 'text') {
+      if ((el as any).isPdfTextOverlay && !(el as any).isEdited) {
+        continue;
+      }
       const font = el.fontWeight === 'bold' || el.fontWeight === '800' ? fontBold : fontRegular;
       const isNeg = el.isNegative;
       const textColor = singlePlateId
